@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mp4 trimmer</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <h1>mp4 trimmer</h1>
+      <span class="hint">space play/pause · q mark in · w mark out · ←/→ 1 s (shift: 0.1 s) · drop or paste a file</span>
+    </header>
+
+    <div class="drop" id="dropzone">
+      <div class="drop-card">
+        <strong>Drop video here</strong>
+        <span>or paste a path (Explorer: shift-right-click &rarr; Copy as path, then Ctrl+V)</span>
+      </div>
+    </div>
+
+    <main>
+      <section class="panel">
+        <h2>Files</h2>
+        <div class="pathbar">
+          <input id="cwd" spellcheck="false" placeholder="C:\Users\..." />
+          <button id="go">Go</button>
+        </div>
+        <div class="list" id="list"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Preview</h2>
+        <div id="filename" class="hint"></div>
+        <div id="meta" class="kf"></div>
+        <video id="video" controls preload="metadata"></video>
+
+        <div class="timeline" id="timeline">
+          <div class="tl-track" id="tlTrack">
+            <div class="tl-sel" id="tlSel"></div>
+            <div class="tl-playhead" id="tlPlayhead"></div>
+            <div class="tl-handle in" id="tlIn" title="drag in point"></div>
+            <div class="tl-handle out" id="tlOut" title="drag out point"></div>
+          </div>
+          <div class="tl-times">
+            <span id="tlIn2">00:00:00.000</span>
+            <span id="tlLen"></span>
+            <span id="tlOut2">00:00:00.000</span>
+          </div>
+        </div>
+
+        <div class="marks">
+          <label>In</label>
+          <input id="start" value="00:00:00.000" spellcheck="false" />
+          <button id="markStart">Mark (q)</button>
+          <button id="seekStart">Go to</button>
+
+          <label>Out</label>
+          <input id="end" placeholder="end of file" spellcheck="false" />
+          <button id="markEnd">Mark (w)</button>
+          <button id="seekEnd">Go to</button>
+        </div>
+
+        <div class="kf">playhead <span id="now">00:00:00.000</span></div>
+
+        <div class="controls">
+          <button id="snap">Snap in to keyframe</button>
+          <label class="check"><input type="checkbox" id="reencode" /> re-encode for frame-exact cut (slow)</label>
+        </div>
+        <div id="kfinfo" class="kf"></div>
+
+        <div class="controls">
+          <input class="grow" id="output" spellcheck="false" placeholder="output path" />
+          <button class="primary" id="trim">Trim</button>
+        </div>
+
+        <div id="status" class="status"></div>
+        <progress id="progress" max="100" value="0" hidden></progress>
+        <pre class="log" id="log"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
