@@ -3,13 +3,89 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 5178);
+const HOST = process.env.HOST || '127.0.0.1';
 const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
+
+// Every path the app touches must sit inside one of these. Colon-separated on
+// Linux, semicolon-separated on Windows (path.delimiter).
+const MEDIA_ROOTS = (process.env.MEDIA_ROOTS || os.homedir())
+  .split(path.delimiter)
+  .map((dir) => dir.trim())
+  .filter(Boolean)
+  .map((dir) => {
+    try {
+      return fs.realpathSync(path.resolve(dir));
+    } catch {
+      return path.resolve(dir);
+    }
+  });
+
+const TOKEN = process.env.TOKEN || crypto.randomBytes(16).toString('hex');
+const COOKIE = 'mp4trim';
+
+const norm = process.platform === 'win32' ? (s) => s.toLowerCase() : (s) => s;
+
+// Resolves symlinks as far as the path exists, so a link inside a root cannot
+// point out of it, and a not-yet-created output file still gets checked.
+function realOrNearest(target) {
+  let cur = path.resolve(target);
+  const tail = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync(cur);
+      return tail.length ? path.join(real, ...tail.slice().reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return path.resolve(target);
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+// Returns the resolved path when it lives under an allowed root, else null.
+function allowed(target) {
+  if (!target) return null;
+  const real = realOrNearest(target);
+  const key = norm(real);
+  const ok = MEDIA_ROOTS.some((root) => key === norm(root) || key.startsWith(norm(root + path.sep)));
+  return ok ? real : null;
+}
+
+function tokenOk(candidate) {
+  if (!candidate) return false;
+  const a = Buffer.from(String(candidate));
+  const b = Buffer.from(TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function cookieToken(req) {
+  const header = req.headers.cookie || '';
+  const hit = header.split(';').map((c) => c.trim()).find((c) => c.startsWith(`${COOKIE}=`));
+  return hit ? decodeURIComponent(hit.slice(COOKIE.length + 1)) : null;
+}
+
+// Token arrives once in the URL, then lives in a cookie so <video src> and
+// XHR uploads authenticate without touching every request in the client.
+function authorize(req, res, url) {
+  if (tokenOk(cookieToken(req))) return true;
+
+  const supplied = url.searchParams.get('token') || req.headers['x-token'];
+  if (tokenOk(supplied)) {
+    res.setHeader('set-cookie', `${COOKIE}=${encodeURIComponent(TOKEN)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`);
+    return true;
+  }
+
+  json(res, 401, { error: 'bad or missing token — open the URL printed by the server' });
+  return false;
+}
 
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -37,23 +113,9 @@ function run(cmd, args) {
   });
 }
 
-async function listDrives() {
-  const drives = [];
-  for (let c = 65; c <= 90; c++) {
-    const root = `${String.fromCharCode(c)}:\\`;
-    try {
-      await fsp.access(root);
-      drives.push(root);
-    } catch {
-      /* drive not present */
-    }
-  }
-  return drives;
-}
-
 async function browse(dir) {
-  const target = dir ? path.resolve(dir) : path.join(os.homedir(), '');
-  const cwd = fs.existsSync(target) ? target : os.homedir();
+  const requested = dir ? allowed(dir) : MEDIA_ROOTS[0];
+  const cwd = requested && fs.existsSync(requested) ? requested : MEDIA_ROOTS[0];
   const entries = await fsp.readdir(cwd, { withFileTypes: true });
   const dirs = [];
   const files = [];
@@ -80,8 +142,8 @@ async function browse(dir) {
 
   return {
     cwd,
-    parent: path.dirname(cwd) === cwd ? null : path.dirname(cwd),
-    drives: process.platform === 'win32' ? await listDrives() : ['/'],
+    parent: allowed(path.dirname(cwd)) && path.dirname(cwd) !== cwd ? path.dirname(cwd) : null,
+    roots: MEDIA_ROOTS,
     dirs,
     files,
   };
@@ -155,7 +217,8 @@ function streamVideo(req, res, file) {
   fs.createReadStream(file, { start, end }).pipe(res);
 }
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'mp4-trimmer');
+// Uploads land inside a root so the trimmer can read them back under the same rules.
+const UPLOAD_DIR = allowed(process.env.UPLOAD_DIR || path.join(MEDIA_ROOTS[0], '_uploads'));
 
 // Turns whatever a drop event produced (plain path, file:// URI, quoted path) into a real file.
 function resolveDropped(raw) {
@@ -170,10 +233,13 @@ function resolveDropped(raw) {
     }
   }
 
+  const safe = allowed(text);
+  if (!safe) return null;
+
   try {
-    const stat = fs.statSync(text);
+    const stat = fs.statSync(safe);
     if (!stat.isFile()) return null;
-    return { path: path.resolve(text), size: stat.size };
+    return { path: safe, size: stat.size };
   } catch {
     return null;
   }
@@ -182,13 +248,15 @@ function resolveDropped(raw) {
 // Fallback for browser-dropped File objects, which carry a name but never a path:
 // look for a matching name+size in the directory the user is already browsing.
 async function findByName(name, size, hint) {
-  const dirs = [hint, path.join(os.homedir(), ''), path.join(os.homedir(), 'Downloads'), path.join(os.homedir(), 'Desktop')];
+  const dirs = [hint, ...MEDIA_ROOTS].map((dir) => dir && allowed(dir));
   const seen = new Set();
+  const base = path.basename(String(name || ''));
+  if (!base) return null;
 
   for (const dir of dirs) {
     if (!dir || seen.has(dir)) continue;
     seen.add(dir);
-    const candidate = path.join(dir, name);
+    const candidate = path.join(dir, base);
     try {
       const stat = await fsp.stat(candidate);
       if (stat.isFile() && (!size || stat.size === Number(size))) {
@@ -203,6 +271,8 @@ async function findByName(name, size, hint) {
 
 // Last resort: stream the dropped bytes to a temp file so ffmpeg has something on disk.
 async function upload(req, res, name) {
+  if (!UPLOAD_DIR) return json(res, 500, { error: 'UPLOAD_DIR is outside the allowed roots' });
+
   const safe = path.basename(String(name || 'dropped.mp4')).replace(/[<>:"|?*]/g, '_');
   await fsp.mkdir(UPLOAD_DIR, { recursive: true });
 
@@ -249,23 +319,33 @@ async function trim(req, res) {
     return json(res, 400, { error: 'bad json' });
   }
 
-  const { input, start, end, output, reencode } = opts;
-  if (!input || !fs.existsSync(input)) return json(res, 400, { error: 'input not found' });
+  const { input, start, end, output, reencode, overwrite } = opts;
+  const src = allowed(input);
+  const dst = allowed(output);
+  if (!src || !fs.existsSync(src)) return json(res, 400, { error: 'input not found inside an allowed root' });
   if (!output) return json(res, 400, { error: 'no output path' });
-  if (path.resolve(input) === path.resolve(output)) return json(res, 400, { error: 'output must differ from input' });
+  if (!dst) return json(res, 400, { error: 'output is outside the allowed roots' });
+  if (src === dst) return json(res, 400, { error: 'output must differ from input' });
+  if (fs.existsSync(dst) && !overwrite) return json(res, 409, { error: `${dst} already exists — tick overwrite to replace it` });
+
+  // Keep timestamps numeric so they can never arrive looking like an ffmpeg flag.
+  const from = Number(start);
+  const to = end == null || end === '' ? null : Number(end);
+  if (!Number.isFinite(from) || from < 0) return json(res, 400, { error: 'bad start time' });
+  if (to != null && (!Number.isFinite(to) || to <= from)) return json(res, 400, { error: 'bad end time' });
 
   const args = ['-hide_banner', '-y'];
   if (reencode) {
     // Accurate cut: seek after -i so the decoder trims at the exact frame.
-    args.push('-i', input, '-ss', String(start));
-    if (end != null && end !== '') args.push('-to', String(end));
+    args.push('-i', src, '-ss', String(from));
+    if (to != null) args.push('-to', String(to));
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k');
   } else {
-    args.push('-ss', String(start));
-    if (end != null && end !== '') args.push('-to', String(end));
-    args.push('-i', input, '-c', 'copy', '-avoid_negative_ts', 'make_zero');
+    args.push('-ss', String(from));
+    if (to != null) args.push('-to', String(to));
+    args.push('-i', src, '-c', 'copy', '-avoid_negative_ts', 'make_zero');
   }
-  args.push(output);
+  args.push(dst);
 
   res.writeHead(200, {
     'content-type': 'text/plain; charset=utf-8',
@@ -278,7 +358,7 @@ async function trim(req, res) {
   child.stderr.on('data', (d) => res.write(d));
   child.stdout.on('data', (d) => res.write(d));
   child.on('error', (e) => res.end(`\n__ERROR__ ${e.message}\n`));
-  child.on('close', (code) => res.end(code === 0 ? `\n__DONE__ ${output}\n` : `\n__ERROR__ ffmpeg exited with code ${code}\n`));
+  child.on('close', (code) => res.end(code === 0 ? `\n__DONE__ ${dst}\n` : `\n__ERROR__ ffmpeg exited with code ${code}\n`));
   req.on('close', () => child.killed || child.kill('SIGKILL'));
 }
 
@@ -286,7 +366,14 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   try {
+    if (!authorize(req, res, url)) return;
+
     if (req.method === 'GET' && STATIC[url.pathname]) {
+      // Drop the token from the address bar once the cookie is set.
+      if (url.pathname === '/' && url.searchParams.has('token')) {
+        res.writeHead(302, { location: '/' });
+        return res.end();
+      }
       const [rel, type] = STATIC[url.pathname];
       res.writeHead(200, { 'content-type': type });
       return fs.createReadStream(path.join(ROOT, rel)).pipe(res);
@@ -297,17 +384,23 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/probe') {
-      return json(res, 200, await probe(url.searchParams.get('path')));
+      const file = allowed(url.searchParams.get('path'));
+      if (!file) return json(res, 403, { error: 'path outside the allowed roots' });
+      return json(res, 200, await probe(file));
     }
 
     if (req.method === 'GET' && url.pathname === '/api/keyframes') {
+      const file = allowed(url.searchParams.get('path'));
+      if (!file) return json(res, 403, { error: 'path outside the allowed roots' });
       return json(res, 200, {
-        times: await keyframes(url.searchParams.get('path'), url.searchParams.get('from'), url.searchParams.get('window')),
+        times: await keyframes(file, url.searchParams.get('from'), url.searchParams.get('window')),
       });
     }
 
     if (req.method === 'GET' && url.pathname === '/api/video') {
-      return streamVideo(req, res, url.searchParams.get('path'));
+      const file = allowed(url.searchParams.get('path'));
+      if (!file) return json(res, 403, { error: 'path outside the allowed roots' });
+      return streamVideo(req, res, file);
     }
 
     if (req.method === 'POST' && url.pathname === '/api/trim') {
@@ -339,6 +432,13 @@ if (code !== 0) {
   console.error(`ffmpeg not runnable as "${FFMPEG}". Set FFMPEG/FFPROBE env vars to full paths.`);
 }
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`mp4 trimmer: http://127.0.0.1:${PORT}`);
+if (!UPLOAD_DIR) {
+  console.error('UPLOAD_DIR is outside MEDIA_ROOTS — drag-and-drop uploads will be refused.');
+}
+
+server.listen(PORT, HOST, () => {
+  const shown = HOST === '0.0.0.0' || HOST === '::' ? os.hostname() : HOST;
+  console.log(`mp4 trimmer  http://${shown}:${PORT}/?token=${TOKEN}`);
+  console.log(`roots: ${MEDIA_ROOTS.join(path.delimiter)}`);
+  if (!process.env.TOKEN) console.log('token is random this boot; set TOKEN=... to keep it stable');
 });

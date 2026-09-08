@@ -1,0 +1,42 @@
+[Unit]
+Description=mp4 trimmer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/mp4
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+# Trimming is I/O bound; keep it from starving interactive work on a Pi 3 B+.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=5
+
+Environment=HOST=0.0.0.0
+Environment=PORT=5178
+Environment=MEDIA_ROOTS=/mnt/media
+Environment=UPLOAD_DIR=/mnt/media/_uploads
+
+# TOKEN=<hex string> lives here, mode 0600, so it stays out of the repo.
+EnvironmentFile=/etc/mp4-trimmer.env
+
+# The whole filesystem is read-only to this unit except the media roots, so a
+# bug in the path checks still cannot write outside them.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=yes
+ReadWritePaths=/mnt/media
+
+[Install]
+WantedBy=multi-user.target

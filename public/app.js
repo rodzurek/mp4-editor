@@ -59,7 +59,7 @@ async function browse(dir) {
     list.append(row);
   };
 
-  for (const drive of data.drives) add(drive, drive, true);
+  for (const root of data.roots) add(root, root, true);
   if (data.parent) add('..', data.parent, true);
   for (const d of data.dirs) add(d.name, d.path, true);
   for (const f of data.files) add(f.name, f.path, false, f.size);
@@ -268,6 +268,7 @@ async function trim() {
     end: end == null ? '' : end.toFixed(3),
     output: el('output').value.trim(),
     reencode: el('reencode').checked,
+    overwrite: el('overwrite').checked,
   };
 
   state.running = true;
