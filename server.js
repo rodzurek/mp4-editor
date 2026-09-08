@@ -184,6 +184,38 @@ async function keyframes(file, from, window) {
     .sort((a, b) => a - b);
 }
 
+const MIME = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+};
+
+function mimeFor(file) {
+  return MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+}
+
+// Same bytes as /api/video, but asks the browser to save instead of play.
+function download(res, file) {
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {
+    return json(res, 404, { error: 'file not found' });
+  }
+
+  const name = path.basename(file);
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+
+  res.writeHead(200, {
+    'content-type': mimeFor(file),
+    'content-length': stat.size,
+    'content-disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`,
+  });
+  fs.createReadStream(file).pipe(res);
+}
+
 function streamVideo(req, res, file) {
   let stat;
   try {
@@ -192,7 +224,7 @@ function streamVideo(req, res, file) {
     return json(res, 404, { error: 'file not found' });
   }
 
-  const type = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm', '.mkv': 'video/x-matroska' }[path.extname(file).toLowerCase()] || 'application/octet-stream';
+  const type = mimeFor(file);
   const range = req.headers.range;
 
   if (!range) {
@@ -395,6 +427,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         times: await keyframes(file, url.searchParams.get('from'), url.searchParams.get('window')),
       });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/download') {
+      const file = allowed(url.searchParams.get('path'));
+      if (!file) return json(res, 403, { error: 'path outside the allowed roots' });
+      return download(res, file);
     }
 
     if (req.method === 'GET' && url.pathname === '/api/video') {

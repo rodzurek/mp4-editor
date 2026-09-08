@@ -67,6 +67,7 @@
           <button id="snap">Snap in to keyframe</button>
           <label class="check"><input type="checkbox" id="reencode" /> re-encode for frame-exact cut (slow)</label>
           <label class="check"><input type="checkbox" id="overwrite" /> overwrite output if it exists</label>
+          <label class="check"><input type="checkbox" id="autodl" checked /> download to this computer when done</label>
         </div>
         <div id="kfinfo" class="kf"></div>
 
@@ -76,6 +77,7 @@
         </div>
 
         <div id="status" class="status"></div>
+        <div id="download" class="kf" hidden></div>
         <progress id="progress" max="100" value="0" hidden></progress>
         <pre class="log" id="log"></pre>
       </section>

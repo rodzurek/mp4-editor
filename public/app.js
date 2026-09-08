@@ -78,6 +78,7 @@ async function load(file) {
   el('end').value = '';
   el('output').value = suggestOutput(file);
   el('kfinfo').textContent = '';
+  el('download').hidden = true;
   setStatus('');
 
   try {
@@ -251,6 +252,23 @@ function setStatus(text, kind = '') {
   node.className = `status ${kind}`;
 }
 
+// The trimmed file lives on the server; pull it to whatever machine is viewing.
+function offerDownload(file) {
+  const url = `/api/download?path=${encodeURIComponent(file)}`;
+  const name = file.split(/[\\/]/).pop();
+  const box = el('download');
+
+  box.hidden = false;
+  box.innerHTML = '';
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.textContent = `download ${name}`;
+  box.append(link);
+
+  if (el('autodl').checked) link.click();
+}
+
 async function trim() {
   if (state.running) return;
   if (!state.file) return setStatus('pick a file first', 'err');
@@ -275,6 +293,7 @@ async function trim() {
   el('trim').disabled = true;
   setStatus('running ffmpeg…');
   el('log').textContent = '';
+  el('download').hidden = true;
 
   try {
     const res = await fetch('/api/trim', {
@@ -301,8 +320,11 @@ async function trim() {
 
     const done = /__DONE__ (.+)/.exec(text);
     const failed = /__ERROR__ (.+)/.exec(text);
-    if (done) setStatus(`wrote ${done[1].trim()}`, 'ok');
-    else if (failed) setStatus(failed[1].trim(), 'err');
+    if (done) {
+      const written = done[1].trim();
+      setStatus(`wrote ${written}`, 'ok');
+      offerDownload(written);
+    } else if (failed) setStatus(failed[1].trim(), 'err');
     else setStatus('finished (no status line)', 'err');
   } catch (e) {
     setStatus(String(e.message || e), 'err');

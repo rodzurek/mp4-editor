@@ -254,3 +254,8 @@ progress {
   .panel { overflow: visible; }
   .list { max-height: 340px; }
 }
+
+#download a {
+  color: var(--accent);
+  font-size: 13px;
+}
