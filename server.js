@@ -12,6 +12,8 @@ const PORT = Number(process.env.PORT || 5178);
 const HOST = process.env.HOST || '127.0.0.1';
 const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
+const YTDLP = process.env.YTDLP || 'yt-dlp';
+const YTDLP_MAX_HEIGHT = Math.max(144, Number(process.env.YTDLP_MAX_HEIGHT) || 1080);
 
 // Every path the app touches must sit inside one of these. Colon-separated on
 // Linux, semicolon-separated on Windows (path.delimiter).
@@ -394,6 +396,91 @@ async function trim(req, res) {
   req.on('close', () => child.killed || child.kill('SIGKILL'));
 }
 
+// Pulls a video from a URL (YouTube or anything else yt-dlp supports) into
+// UPLOAD_DIR, streaming yt-dlp's output back so the browser can show progress.
+async function fetchUrl(req, res) {
+  if (!UPLOAD_DIR) return json(res, 500, { error: 'UPLOAD_DIR is outside the allowed roots' });
+
+  let opts;
+  try {
+    opts = JSON.parse(await readBody(req));
+  } catch {
+    return json(res, 400, { error: 'bad json' });
+  }
+
+  let link;
+  try {
+    link = new URL(String(opts.url || '').trim());
+  } catch {
+    return json(res, 400, { error: 'not a valid URL' });
+  }
+  if (link.protocol !== 'http:' && link.protocol !== 'https:') {
+    return json(res, 400, { error: 'only http and https links are accepted' });
+  }
+
+  await fsp.mkdir(UPLOAD_DIR, { recursive: true });
+
+  // Prefer H.264 + AAC so the browser previews it and stream-copy trims stay lossless.
+  const h = YTDLP_MAX_HEIGHT;
+  const format = [
+    `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]`,
+    `bv*[height<=${h}][ext=mp4]+ba[ext=m4a]`,
+    `b[height<=${h}][ext=mp4]`,
+    `bv*[height<=${h}]+ba`,
+    `b[height<=${h}]`,
+    'b',
+  ].join('/');
+
+  const args = [
+    '--newline',
+    '--progress',
+    '--no-playlist',
+    '--no-mtime',
+    '--restrict-filenames',
+    '-f', format,
+    '--merge-output-format', 'mp4',
+    '-o', path.join(UPLOAD_DIR, '%(title).80B [%(id)s].%(ext)s'),
+    '--print', 'after_move:__FILE__ %(filepath)s',
+  ];
+  // Only point yt-dlp at ffmpeg when it was configured as an explicit path.
+  if (process.env.FFMPEG) args.push('--ffmpeg-location', process.env.FFMPEG);
+  // "--" stops option parsing, so the URL can never be read as a yt-dlp flag.
+  args.push('--', link.href);
+
+  res.writeHead(200, {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-cache',
+    'x-accel-buffering': 'no',
+  });
+  res.write(`$ yt-dlp ${link.href}\n`);
+
+  const child = spawn(YTDLP, args, {
+    windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+  });
+
+  let out = '';
+  child.stdout.on('data', (d) => {
+    out += d;
+    res.write(d);
+  });
+  child.stderr.on('data', (d) => res.write(d));
+  child.on('error', (e) => {
+    const hint = e.code === 'ENOENT' ? `yt-dlp not found as "${YTDLP}" — install it or set YTDLP` : e.message;
+    res.end(`\n__ERROR__ ${hint}\n`);
+  });
+  child.on('close', (code) => {
+    if (res.writableEnded) return;
+    if (code !== 0) return res.end(`\n__ERROR__ yt-dlp exited with code ${code}\n`);
+
+    const line = out.split(/\r?\n/).reverse().find((l) => l.startsWith('__FILE__ '));
+    const file = line && allowed(line.slice('__FILE__ '.length).trim());
+    if (!file || !fs.existsSync(file)) return res.end('\n__ERROR__ yt-dlp finished but the file could not be located\n');
+    res.end(`\n__DONE__ ${file}\n`);
+  });
+  req.on('close', () => child.killed || child.exitCode != null || child.kill('SIGKILL'));
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -454,6 +541,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, hit ? { ...hit, found: true } : { found: false });
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/fetch') {
+      return await fetchUrl(req, res);
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/upload') {
       return await upload(req, res, url.searchParams.get('name'));
     }
@@ -468,6 +559,11 @@ const server = http.createServer(async (req, res) => {
 const { code } = await run(FFMPEG, ['-version']);
 if (code !== 0) {
   console.error(`ffmpeg not runnable as "${FFMPEG}". Set FFMPEG/FFPROBE env vars to full paths.`);
+}
+
+const ytdlp = await run(YTDLP, ['--version']);
+if (ytdlp.code !== 0) {
+  console.error(`yt-dlp not runnable as "${YTDLP}" — pasting video links will not work. Install it or set YTDLP.`);
 }
 
 if (!UPLOAD_DIR) {

@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>mp4 trimmer</h1>
-      <span class="hint">space play/pause · q mark in · w mark out · ←/→ 1 s (shift: 0.1 s) · drop or paste a file</span>
+      <span class="hint">space play/pause · q mark in · w mark out · ←/→ 1 s (shift: 0.1 s) · drop or paste a file or video link</span>
     </header>
 
     <div class="drop" id="dropzone">
@@ -22,6 +22,10 @@
     <main>
       <section class="panel">
         <h2>Files</h2>
+        <div class="pathbar">
+          <input id="linkUrl" spellcheck="false" placeholder="paste a YouTube link" />
+          <button id="fetchLink">Fetch</button>
+        </div>
         <div class="pathbar">
           <input id="cwd" spellcheck="false" placeholder="C:\Users\..." />
           <button id="go">Go</button>

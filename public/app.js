@@ -302,34 +302,81 @@ async function trim() {
       body: JSON.stringify(body),
     });
 
-    if (res.headers.get('content-type')?.includes('json')) {
-      const { error } = await res.json();
-      throw new Error(error || 'request failed');
-    }
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let text = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      text += decoder.decode(value, { stream: true });
-      el('log').textContent = text;
-      el('log').scrollTop = el('log').scrollHeight;
-    }
-
-    const done = /__DONE__ (.+)/.exec(text);
-    const failed = /__ERROR__ (.+)/.exec(text);
-    if (done) {
-      const written = done[1].trim();
-      setStatus(`wrote ${written}`, 'ok');
-      offerDownload(written);
-    } else if (failed) setStatus(failed[1].trim(), 'err');
-    else setStatus('finished (no status line)', 'err');
+    const written = await streamLog(res);
+    setStatus(`wrote ${written}`, 'ok');
+    offerDownload(written);
   } catch (e) {
     setStatus(String(e.message || e), 'err');
   } finally {
     state.running = false;
+    el('trim').disabled = false;
+  }
+}
+
+// Shows a streamed server log as it arrives; resolves with the __DONE__ path or throws the __ERROR__ text.
+async function streamLog(res, onText) {
+  if (res.headers.get('content-type')?.includes('json')) {
+    const { error } = await res.json();
+    throw new Error(error || 'request failed');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    el('log').textContent = text;
+    el('log').scrollTop = el('log').scrollHeight;
+    onText?.(text);
+  }
+
+  const done = /__DONE__ (.+)/.exec(text);
+  const failed = /__ERROR__ (.+)/.exec(text);
+  if (done) return done[1].trim();
+  throw new Error(failed ? failed[1].trim() : 'finished (no status line)');
+}
+
+/* ---------- fetch from a link ---------- */
+
+const isLink = (text) => /^https?:\/\/\S+$/i.test(String(text || '').trim());
+
+async function fetchLink(url) {
+  if (state.running) return;
+  const link = String(url || '').trim();
+  if (!isLink(link)) return setStatus('paste an http(s) video link', 'err');
+
+  state.running = true;
+  el('fetchLink').disabled = true;
+  el('trim').disabled = true;
+  el('log').textContent = '';
+  el('download').hidden = true;
+  setStatus('downloading with yt-dlp…');
+
+  try {
+    const res = await fetch('/api/fetch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: link }),
+    });
+
+    // yt-dlp prints "[download]  42.0% of ..." per line; show the latest one.
+    const file = await streamLog(res, (text) => {
+      const hits = text.match(/\[download\]\s+(\d+(?:\.\d+)?)%/g);
+      if (hits) showProgress(Number(/([\d.]+)%/.exec(hits[hits.length - 1])[1]));
+    });
+
+    showProgress(null);
+    el('linkUrl').value = '';
+    await useFile(file);
+    setStatus(`downloaded to ${file} — mark in/out and trim`, 'ok');
+  } catch (e) {
+    showProgress(null);
+    setStatus(String(e.message || e), 'err');
+  } finally {
+    state.running = false;
+    el('fetchLink').disabled = false;
     el('trim').disabled = false;
   }
 }
@@ -446,6 +493,10 @@ window.addEventListener('paste', async (e) => {
   const text = e.clipboardData?.getData('text/plain');
   if (!text) return;
   e.preventDefault();
+  if (isLink(text.split(/\r?\n/)[0])) {
+    el('linkUrl').value = text.split(/\r?\n/)[0].trim();
+    return fetchLink(el('linkUrl').value);
+  }
   const hit = await resolvePath({ text: text.split(/\r?\n/)[0] });
   if (hit.found) await useFile(hit.path);
   else setStatus(`no file at ${text.trim()}`, 'err');
@@ -453,6 +504,8 @@ window.addEventListener('paste', async (e) => {
 
 /* ---------- wiring ---------- */
 
+el('fetchLink').onclick = () => fetchLink(el('linkUrl').value);
+el('linkUrl').onkeydown = (e) => e.key === 'Enter' && fetchLink(el('linkUrl').value);
 el('go').onclick = () => browse(el('cwd').value);
 el('cwd').onkeydown = (e) => e.key === 'Enter' && browse(el('cwd').value);
 el('markStart').onclick = () => mark('start');
