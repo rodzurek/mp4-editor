@@ -14,7 +14,7 @@ document.querySelector('#app').innerHTML = `
   <div>
     <h1>Get started</h1>
     <p>Edit <code>src/main.js</code> and save to test <code>HMR</code></p>
-  </div>
+  </div>w
   <button id="counter" type="button" class="counter"></button>
 </section>
 
