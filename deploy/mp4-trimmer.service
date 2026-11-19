@@ -22,6 +22,13 @@ Environment=PORT=5178
 Environment=MEDIA_ROOTS=/mnt/media
 Environment=UPLOAD_DIR=/mnt/media/_uploads
 
+# Video links: yt-dlp from pipx lives outside the default PATH. Home is
+# read-only to this unit, so point its cache at the private /tmp.
+Environment=YTDLP=/home/pi/.local/bin/yt-dlp
+Environment=XDG_CACHE_HOME=/tmp/cache
+# yt-dlp looks for deno on PATH to solve YouTube's JavaScript challenges.
+Environment=PATH=/home/pi/.deno/bin:/usr/local/bin:/usr/bin:/bin
+
 # TOKEN=<hex string> lives here, mode 0600, so it stays out of the repo.
 EnvironmentFile=/etc/mp4-trimmer.env
 

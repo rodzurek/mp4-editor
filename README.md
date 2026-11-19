@@ -26,6 +26,27 @@ no token in the URL.
 | `TOKEN`       | random each boot     | Shared secret. Set it to keep URLs stable.            |
 | `FFMPEG`      | `ffmpeg`             | Path to the binary.                                   |
 | `FFPROBE`     | `ffprobe`            | Path to the binary.                                   |
+| `YTDLP`       | `yt-dlp`             | Path to the binary. Only needed for video links.      |
+| `YTDLP_MAX_HEIGHT` | `1080`          | Highest resolution fetched from a link.               |
+
+## Video links
+
+Paste a YouTube link (or anything else yt-dlp supports) into the link box, or
+press Ctrl+V anywhere on the page. The server runs yt-dlp, saves the video in
+`UPLOAD_DIR`, and loads it into the preview. Then mark in/out and trim as usual.
+
+It prefers H.264 + AAC in an mp4, so the browser previews the file and
+stream-copy trims stay lossless. Playlists are ignored; only the linked video is
+fetched.
+
+Install yt-dlp, and deno so yt-dlp can solve YouTube's JavaScript challenges:
+
+    winget install yt-dlp.yt-dlp DenoLand.Deno          # Windows
+    pipx install yt-dlp && curl -fsSL https://deno.land/install.sh | sh   # Pi
+
+YouTube breaks yt-dlp regularly. When fetches start failing, update it
+(`yt-dlp -U`, or `pipx upgrade yt-dlp`). Only download videos you have the
+rights to; YouTube's terms forbid downloading otherwise.
 
 ## Security model
 
