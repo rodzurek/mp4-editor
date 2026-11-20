@@ -104,6 +104,20 @@ button:disabled { opacity: .5; cursor: default; }
 .row .size { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row.dir .name::before { content: "📁 "; }
+.row .name { flex: 1 1 auto; }
+.row .del {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  line-height: 1.4;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  opacity: 0;
+}
+.row:hover .del, .row .del:focus-visible { opacity: 1; }
+.row .del:hover { color: var(--err); border-color: var(--err); }
+@media (hover: none) { .row .del { opacity: 1; } }
 
 .panel > video {
   flex: 1 1 auto;

@@ -56,6 +56,19 @@ async function browse(dir) {
     row.querySelector('.name').textContent = label;
     if (!isDir && target === state.file) row.classList.add('active');
     row.onclick = () => (isDir ? browse(target) : load(target));
+
+    if (!isDir) {
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.type = 'button';
+      del.title = `delete ${label}`;
+      del.textContent = '✕';
+      del.onclick = (e) => {
+        e.stopPropagation();
+        deleteFile(target, label);
+      };
+      row.append(del);
+    }
     list.append(row);
   };
 
@@ -63,6 +76,44 @@ async function browse(dir) {
   if (data.parent) add('..', data.parent, true);
   for (const d of data.dirs) add(d.name, d.path, true);
   for (const f of data.files) add(f.name, f.path, false, f.size);
+}
+
+// Deletes for good (no recycle bin on the server), so always confirm first.
+async function deleteFile(file, label) {
+  if (state.running) return setStatus('wait for the current job to finish', 'err');
+  if (!confirm(`Delete ${label} permanently?\n\n${file}\n\nThis cannot be undone.`)) return;
+
+  // Release the player's hold on the file, or Windows refuses the delete.
+  if (file === state.file) {
+    const video = el('video');
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+
+  try {
+    const res = await fetch('/api/delete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: file }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `delete failed (${res.status})`);
+
+    if (file === state.file) {
+      state.file = null;
+      state.duration = 0;
+      el('filename').textContent = '';
+      el('meta').textContent = '';
+      el('output').value = '';
+      el('download').hidden = true;
+      syncTimeline();
+    }
+    setStatus(`deleted ${body.deleted}`, 'ok');
+  } catch (e) {
+    setStatus(String(e.message || e), 'err');
+  }
+  await browse(state.cwd);
 }
 
 /* ---------- load a video ---------- */

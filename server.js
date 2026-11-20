@@ -396,6 +396,38 @@ async function trim(req, res) {
   req.on('close', () => child.killed || child.kill('SIGKILL'));
 }
 
+// Permanently removes one video file. Only regular files with a video
+// extension inside the allowed roots; never directories or symlinks.
+async function remove(req, res) {
+  let opts;
+  try {
+    opts = JSON.parse(await readBody(req));
+  } catch {
+    return json(res, 400, { error: 'bad json' });
+  }
+
+  const given = opts.path ? path.resolve(String(opts.path)) : null;
+  const file = allowed(given);
+  if (!file) return json(res, 403, { error: 'path outside the allowed roots' });
+  if (!VIDEO_EXT.has(path.extname(file).toLowerCase())) return json(res, 400, { error: 'only video files can be deleted' });
+
+  let stat;
+  try {
+    stat = await fsp.lstat(given);
+  } catch {
+    return json(res, 404, { error: 'file not found' });
+  }
+  if (!stat.isFile()) return json(res, 400, { error: 'not a regular file' });
+
+  try {
+    await fsp.unlink(file);
+  } catch (e) {
+    const busy = e.code === 'EBUSY' || e.code === 'EPERM';
+    return json(res, busy ? 409 : 500, { error: busy ? 'file is in use — stop playback and try again' : e.message });
+  }
+  json(res, 200, { deleted: file });
+}
+
 // Pulls a video from a URL (YouTube or anything else yt-dlp supports) into
 // UPLOAD_DIR, streaming yt-dlp's output back so the browser can show progress.
 async function fetchUrl(req, res) {
@@ -539,6 +571,10 @@ const server = http.createServer(async (req, res) => {
         ? resolveDropped(text)
         : await findByName(url.searchParams.get('name'), url.searchParams.get('size'), url.searchParams.get('hint'));
       return json(res, 200, hit ? { ...hit, found: true } : { found: false });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/delete') {
+      return await remove(req, res);
     }
 
     if (req.method === 'POST' && url.pathname === '/api/fetch') {
