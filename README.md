@@ -31,7 +31,8 @@ no token in the URL.
 
 ## Video links
 
-Paste a YouTube link (or anything else yt-dlp supports) into the link box, or
+Paste a YouTube, Instagram or Facebook link (or anything else yt-dlp supports)
+into the link box, or
 press Ctrl+V anywhere on the page. The server runs yt-dlp, saves the video in
 `UPLOAD_DIR`, and loads it into the preview. Then mark in/out and trim as usual.
 
@@ -43,6 +44,9 @@ Install yt-dlp, and deno so yt-dlp can solve YouTube's JavaScript challenges:
 
     winget install yt-dlp.yt-dlp DenoLand.Deno          # Windows
     pipx install yt-dlp && curl -fsSL https://deno.land/install.sh | sh   # Pi
+
+Instagram and Facebook often refuse posts to anyone not signed in, so many
+links there fail without browser cookies. Public Facebook videos usually work.
 
 YouTube breaks yt-dlp regularly. When fetches start failing, update it
 (`yt-dlp -U`, or `pipx upgrade yt-dlp`). Only download videos you have the
