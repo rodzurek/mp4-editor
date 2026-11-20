@@ -505,9 +505,10 @@ window.addEventListener('paste', async (e) => {
 /* ---------- wiring ---------- */
 
 el('fetchLink').onclick = () => fetchLink(el('linkUrl').value);
-el('linkUrl').onkeydown = (e) => e.key === 'Enter' && fetchLink(el('linkUrl').value);
+// Braces matter: an on* handler that returns false cancels the key, which blocked typing and Ctrl+V.
+el('linkUrl').onkeydown = (e) => { if (e.key === 'Enter') fetchLink(el('linkUrl').value); };
 el('go').onclick = () => browse(el('cwd').value);
-el('cwd').onkeydown = (e) => e.key === 'Enter' && browse(el('cwd').value);
+el('cwd').onkeydown = (e) => { if (e.key === 'Enter') browse(el('cwd').value); };
 el('markStart').onclick = () => mark('start');
 el('markEnd').onclick = () => mark('end');
 el('seekStart').onclick = () => seekTo('start');
